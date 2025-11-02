@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Velocity Forge Billing & Admin</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load qrcode.js library for generating QR codes -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Load html2canvas for capturing DOM (PDF Step 1) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- Load jsPDF for creating PDF (PDF Step 2) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <!-- Firebase Libraries -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, orderBy, getDocs, addDoc, serverTimestamp, where, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // IMPORTANT: Global variables must be assigned to window scope for use in the main script block
+        window.firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        window.initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        window.appId = typeof __app_id !== 'undefined' ? __app_id : 'velocity-forge-billing';
+
+        if (window.firebaseConfig) {
+            setLogLevel('debug'); // Enable Firestore logging
+            window.app = initializeApp(window.firebaseConfig);
+            window.db = getFirestore(window.app);
+            window.auth = getAuth(window.app);
+            
+            // --- FIX: Expose Firestore functions globally to resolve ReferenceErrors ---
+            window.collection = collection;
+            window.query = query;
+            window.orderBy = orderBy;
+            window.serverTimestamp = serverTimestamp;
+            window.doc = doc;
+            window.setDoc = setDoc;
+            window.onSnapshot = onSnapshot;
+            window.getDocs = getDocs;
+            // --------------------------------------------------------------------------
+
+            // Authentication and User ID setup
+            onAuthStateChanged(window.auth, (user) => {
+                if (user) {
+                    window.userId = user.uid;
+                    document.dispatchEvent(new Event('authReady'));
+                } else {
+                    // Sign in anonymously if no token is available
+                    if (window.initialAuthToken) {
+                        signInWithCustomToken(window.auth, window.initialAuthToken)
+                            .catch(error => {
+                                console.error("Error signing in with custom token:", error);
+                                signInAnonymously(window.auth);
+                            });
+                    } else {
+                        signInAnonymously(window.auth);
+                    }
+                }
+            });
+        }
+    </script>
+    
+    <style>
+        /* Custom Dark Theme Styles */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* Dark background */
+            color: #d1d5db; /* Light gray text */
+        }
+        .header-gradient {
+            background: #1f2937; /* Darker gradient look */
+        }
+        .section-card {
+            background-color: #1f2937; /* Dark card background */
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.1);
+        }
+        input, select, textarea {
+            background-color: #374151 !important; /* Dark input fields */
+            color: #f3f4f6 !important;
+            border-color: #4b5563 !important;
+        }
+        input:focus, select:focus {
+            border-color: #f87171 !important;
+            box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.5) !important;
+        }
+        .btn-primary {
+            background-color: #f87171; /* Red color for forge/velocity feel */
+            transition: background-color 0.2s;
+        }
+        .btn-primary:hover {
+            background-color: #ef4444;
+        }
+        /* Custom graph bar styling */
+        .graph-bar {
+            height: 10px;
+            background-color: #f87171;
+            border-radius: 2px;
+            margin-bottom: 2px;
+            transition: width 1s ease-out;
+        }
+        /* Style for the element being captured by html2canvas for PDF */
+        .pdf-capture-target {
+            /* We are removing the padding here to let html2canvas use its own internal scaling */
+            padding: 0; 
+            margin: 0;
+            width: 794px; /* A4 width at 96 DPI for better scaling */
+            background-color: #1f2937 !important; /* Ensure dark theme background is captured */
+        }
+        /* Ensure inner content fills the width when captured */
+        .pill-card > * {
+            max-width: none !important;
+            width: 100% !important;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <!-- Header Section (Navigation Bar) -->
+    <header class="header-gradient text-white shadow-lg p-4">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-3xl font-extrabold tracking-tight">
+                <span class="text-red-400">Velocity</span> Forge
+            </h1>
+            <nav id="navBar" class="space-x-4 flex">
+                <button onclick="changePage('home')" class="py-2 px-3 rounded-lg text-sm font-medium hover:bg-gray-700 transition duration-150">Home</button>
+                <button onclick="changePage('form')" class="py-2 px-3 rounded-lg text-sm font-medium hover:bg-gray-700 transition duration-150">Generator</button>
+                <button onclick="changePage('admin')" class="py-2 px-3 rounded-lg text-sm font-medium hover:bg-red-700 transition duration-150">Admin Panel</button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-4 md:p-8">
+        
+        <!-- REMOVED: The Three Predicted Things / Organizational Pillars -->
+
+        <!-- PAGE 1: Home/Selection -->
+        <section id="page-home" class="page-section">
+            <div class="flex flex-col items-center justify-center p-12 section-card rounded-2xl">
+                <h2 class="text-3xl font-bold mb-8 text-white">Select Your Record Type</h2>
+                <p class="text-gray-400 mb-10 text-center">Choose whether you are generating a final Invoice (Direct Bill) or a Quotation that requires a deposit.</p>
+                <div class="flex space-x-6">
+                    <button onclick="selectType('Invoice')" class="py-4 px-8 rounded-lg text-xl font-semibold btn-primary hover:scale-105 transition transform shadow-lg">
+                        Direct Bill (Invoice)
+                    </button>
+                    <button onclick="selectType('Quotation')" class="py-4 px-8 rounded-lg text-xl font-semibold bg-blue-600 hover:bg-blue-700 transition transform hover:scale-105 shadow-lg">
+                        Quotation
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 2: Form and Records -->
+        <section id="page-form" class="page-section hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                
+                <!-- Input Form Section -->
+                <section class="lg:col-span-1 section-card p-6 rounded-2xl h-fit">
+                    <h2 class="text-2xl font-semibold mb-6 text-red-400 border-b border-gray-700 pb-3" id="formTitle">Generate New Invoice</h2>
+                    <form id="invoiceForm" class="space-y-4">
+                        
+                        <!-- Hidden Type Selector (For JS context) -->
+                        <input type="hidden" id="recordType" name="recordType" value="Invoice">
+
+                        <!-- Team Member Selection (UPDATED to Select) -->
+                        <div>
+                            <label for="teamMember" class="block text-sm font-medium text-gray-300">Team Member Name</label>
+                            <select id="teamMember" name="teamMember" required class="mt-1 block w-full pl-3 pr-10 py-2 text-base rounded-lg shadow-sm">
+                                <option value="" disabled selected>--- Select Team Member ---</option>
+                                <option value="Ashtroy Roberto">Ashtroy Roberto</option>
+                                <option value="Samuel Joshua Alves">Samuel Joshua Alves</option>
+                                <option value="Krishnamurhty Jahav">Krishnamurhty Jahav</option>
+                                <option value="Nilesh">Nilesh</option>
+                            </select>
+                        </div>
+
+                        <!-- Invoice/Quote Number (Now Editable) -->
+                        <div>
+                            <label for="invoiceNumber" class="block text-sm font-medium text-gray-300">Invoice/Quote ID</label>
+                            <input type="text" id="invoiceNumber" required class="mt-1 block w-full rounded-lg shadow-sm p-2 border">
+                        </div>
+
+                        <!-- Client Details -->
+                        <div>
+                            <label for="customerName" class="block text-sm font-medium text-gray-300">Customer Name</label>
+                            <input type="text" id="customerName" placeholder="John Doe" required class="mt-1 block w-full rounded-lg shadow-sm p-2 border">
+                        </div>
+                        <div>
+                            <label for="mobileNumber" class="block text-sm font-medium text-gray-300">Mobile Number</label>
+                            <input type="tel" id="mobileNumber" placeholder="+91-9876543210" required class="mt-1 block w-full rounded-lg shadow-sm p-2 border">
+                        </div>
+                        <div>
+                            <label for="date" class="block text-sm font-medium text-gray-300">Date</label>
+                            <input type="date" id="date" required class="mt-1 block w-full rounded-lg shadow-sm p-2 border">
+                        </div>
+                        
+                        <!-- Service Details -->
+                        <div>
+                            <label for="serviceName" class="block text-sm font-medium text-gray-300">Service/Product Name</label>
+                            <input type="text" id="serviceName" placeholder="Premium Climate Service" required class="mt-1 block w-full rounded-lg shadow-sm p-2 border">
+                        </div>
+                        <div>
+                            <label for="amountCharged" class="block text-sm font-medium text-gray-300">Amount Charged (₹)</label>
+                            <input type="number" id="amountCharged" placeholder="12000.00" required step="0.01" min="0" class="mt-1 block w-full rounded-lg shadow-sm p-2 border">
+                        </div>
+                        
+                        <!-- Quotation Specific Input (Conditional) -->
+                        <div id="quotation-option" class="hidden">
+                            <label for="upfrontPercentage" class="block text-sm font-medium text-gray-300">Upfront Payment Percentage</label>
+                            <select id="upfrontPercentage" name="upfrontPercentage" class="mt-1 block w-full pl-3 pr-10 py-2 text-base rounded-lg shadow-sm">
+                                <option value="0.20">20%</option>
+                                <option value="0.25">25%</option>
+                                <option value="0.30">30%</option>
+                            </select>
+                        </div>
+
+                        <button type="submit" class="w-full btn-primary text-white py-2 px-4 rounded-lg font-semibold shadow-md hover:shadow-lg mt-6">
+                            Generate Record
+                        </button>
+                    </form>
+                </section>
+
+                <!-- Output Display Section (Records) -->
+                <section class="lg:col-span-2">
+                    <h2 class="text-2xl font-semibold mb-6 text-white">Generated Records (Pills)</h2>
+                    <div id="recordsContainer" class="space-y-6">
+                        <p id="noRecordsMessage" class="text-gray-500 italic">No records found.</p>
+                    </div>
+                </section>
+
+            </div>
+        </section>
+
+        <!-- PAGE 3: Admin Panel -->
+        <section id="page-admin" class="page-section hidden">
+            <!-- Login Screen -->
+            <div id="adminLogin" class="flex flex-col items-center justify-center p-12 section-card rounded-2xl w-full max-w-md mx-auto">
+                <h2 class="text-3xl font-bold mb-6 text-red-400">Admin Login</h2>
+                <form id="loginForm" class="space-y-4 w-full">
+                    <div>
+                        <label for="adminId" class="block text-sm font-medium text-gray-300">ID</label>
+                        <!-- Removed pre-filled value for security -->
+                        <input type="text" id="adminId" required class="mt-1 block w-full rounded-lg shadow-sm p-2 border">
+                    </div>
+                    <div>
+                        <label for="adminPass" class="block text-sm font-medium text-gray-300">Password</label>
+                        <!-- Removed pre-filled value for security -->
+                        <input type="password" id="adminPass" required class="mt-1 block w-full rounded-lg shadow-sm p-2 border">
+                    </div>
+                    <button type="submit" class="w-full btn-primary text-white py-2 px-4 rounded-lg font-semibold shadow-md">
+                        Login
+                    </button>
+                    <p id="loginMessage" class="text-center text-sm text-red-400"></p>
+                </form>
+            </div>
+
+            <!-- Admin Dashboard -->
+            <div id="adminDashboard" class="hidden">
+                <h2 class="text-3xl font-bold mb-6 text-red-400">Admin Dashboard</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <div class="section-card p-6 rounded-xl">
+                        <p class="text-sm text-gray-400">Total Records Generated</p>
+                        <p id="stat-total-pills" class="text-4xl font-extrabold text-white mt-1">0</p>
+                    </div>
+                    <div class="section-card p-6 rounded-xl">
+                        <p class="text-sm text-gray-400">Total Revenue Tracked</p>
+                        <p id="stat-total-revenue" class="text-4xl font-extrabold text-white mt-1">₹ 0.00</p>
+                    </div>
+                    <div class="section-card p-6 rounded-xl">
+                        <p class="text-sm text-gray-400">Total Quotation Value</p>
+                        <p id="stat-total-quote" class="text-4xl font-extrabold text-white mt-1">₹ 0.00</p>
+                    </div>
+                </div>
+
+                <!-- Monthly Growth Graph -->
+                <div class="section-card p-6 rounded-xl mb-8">
+                    <h3 class="text-xl font-semibold mb-4 text-white">Monthly Revenue Tracking (Invoices Only)</h3>
+                    <div id="monthlyRevenueGraph" class="space-y-3">
+                        <!-- Graph bars injected here -->
+                        <p class="text-gray-500">Loading graph data...</p>
+                    </div>
+                </div>
+
+                <!-- Team Member Statistics -->
+                <div class="section-card p-6 rounded-xl">
+                    <h3 class="text-xl font-semibold mb-4 text-white">Team Member Performance (Bill Count)</h3>
+                    <div id="teamStats" class="space-y-2 text-sm">
+                        <!-- Team stats injected here -->
+                        <p class="text-gray-500">Loading team statistics...</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        // Global State
+        let currentPage = 'home';
+        let currentRecordType = 'Invoice';
+        
+        // Admin Credentials
+        const ADMIN_ID = 'krishna';
+        const ADMIN_PASS = 'krishna@16';
+        
+        // UPI Constants
+        const UPI_ID = 'krishnagamers92-3@okaxis'; 
+        const RECEIVER_NAME = 'Velocity Forge';
+
+        // --- Core Application Logic (Pages & State) ---
+
+        function changePage(page) {
+            currentPage = page;
+            document.querySelectorAll('.page-section').forEach(section => {
+                section.classList.add('hidden');
+            });
+            document.getElementById(`page-${page}`).classList.remove('hidden');
+
+            // Specific logic for page transitions
+            if (page === 'form') {
+                updateFormForType(currentRecordType);
+                startRecordListener();
+            } else if (page === 'admin') {
+                // Check if already logged in (simple client-side flag)
+                if (document.getElementById('adminDashboard').classList.contains('hidden')) {
+                    document.getElementById('adminLogin').classList.remove('hidden');
+                    document.getElementById('adminDashboard').classList.add('hidden');
+                } else {
+                    fetchAdminData();
+                }
+            }
+        }
+        
+        function selectType(type) {
+            currentRecordType = type;
+            changePage('form');
+        }
+
+        function updateFormForType(type) {
+            const title = document.getElementById('formTitle');
+            const typeInput = document.getElementById('recordType');
+            const quoteOption = document.getElementById('quotation-option');
+            
+            title.textContent = `Generate New ${type}`;
+            typeInput.value = type;
+
+            if (type === 'Quotation') {
+                quoteOption.classList.remove('hidden');
+                // Ensure required attributes are set for the upfront percentage dropdown
+                document.getElementById('upfrontPercentage').setAttribute('required', 'required');
+            } else {
+                quoteOption.classList.add('hidden');
+                document.getElementById('upfrontPercentage').removeAttribute('required');
+            }
+
+            // Update the ID prefix and ensure the ID is editable
+            document.getElementById('invoiceNumber').value = generateUniqueId(type);
+            document.getElementById('invoiceNumber').removeAttribute('readonly');
+        }
+
+        // --- Data Persistence (Firestore) ---
+
+        // Helper to get the correct Firestore path
+        function getCollectionRef() {
+            const uid = window.auth?.currentUser?.uid || 'anonymous';
+            const appId = window.appId;
+            // Using the public path for shared admin panel data
+            return collection(window.db, 'artifacts', appId, 'public', 'data', 'invoices_quotes');
+        }
+
+        // Real-time listener for the Form Page records
+        function startRecordListener() {
+            if (!window.db) return console.error("Firestore not initialized.");
+            
+            const recordsContainer = document.getElementById('recordsContainer');
+            // NOTE: orderBy is kept here, but should be used cautiously in real apps
+            const recordsQuery = query(getCollectionRef(), orderBy('timestamp', 'desc'));
+
+            // Cleanup previous listener if needed, though onSnapshot handles this generally
+            if (window.unsubscribeRecords) {
+                window.unsubscribeRecords();
+            }
+
+            window.unsubscribeRecords = onSnapshot(recordsQuery, (snapshot) => {
+                recordsContainer.innerHTML = '';
+                if (snapshot.empty) {
+                    recordsContainer.innerHTML = '<p id="noRecordsMessage" class="text-gray-500 italic">No records found.</p>';
+                } else {
+                    document.getElementById('noRecordsMessage')?.remove();
+                    snapshot.forEach(doc => {
+                        const data = doc.data();
+                        const recordHtml = createRecordPill(data);
+                        recordsContainer.appendChild(recordHtml);
+                        
+                        // Regenerate QR code after element is in DOM
+                        const qrData = createQrDataString(data.amountCharged, data.upfrontAmount, data.id); // Passing ID for reference
+                        generateQRCode(data.id, qrData);
+                    });
+                }
+            }, (error) => {
+                console.error("Error listening to records:", error);
+                recordsContainer.innerHTML = '<p class="text-red-400">Error loading records. Check console.</p>';
+            });
+        }
+
+        // --- Form Submission and Saving ---
+        
+        document.getElementById('invoiceForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            if (!window.db || !window.auth.currentUser) {
+                return console.error("Authentication or Firestore is not ready.");
+            }
+
+            const form = e.target;
+            const recordType = form.recordType.value;
+            const amountCharged = parseFloat(form.amountCharged.value);
+            const recordId = form.invoiceNumber.value;
+            
+            // Check for mandatory Team Member selection
+            if (form.teamMember.value === "") {
+                // This shouldn't be reached if 'required' attribute works, but as a safeguard:
+                return console.error("Please select a team member.");
+            }
+            
+            let upfrontPercentage = 0;
+            let upfrontAmount = 0;
+
+            if (recordType === 'Quotation') {
+                upfrontPercentage = parseFloat(form.upfrontPercentage.value);
+                upfrontAmount = amountCharged * upfrontPercentage;
+            }
+
+            const newRecord = {
+                id: recordId,
+                type: recordType,
+                customerName: form.customerName.value,
+                mobileNumber: form.mobileNumber.value,
+                date: form.date.value,
+                serviceName: form.serviceName.value,
+                amountCharged: amountCharged,
+                upfrontPercentage: upfrontPercentage,
+                upfrontAmount: upfrontAmount,
+                teamMember: form.teamMember.value, // Now guaranteed to be a valid selection
+                timestamp: serverTimestamp(),
+                createdBy: window.auth.currentUser.uid
+            };
+
+            try {
+                // Use setDoc for predictable ID saving
+                await setDoc(doc(getCollectionRef(), recordId), newRecord);
+                
+                // Clear form fields after successful save
+                form.customerName.value = '';
+                form.mobileNumber.value = '';
+                form.serviceName.value = '';
+                form.amountCharged.value = '';
+                // Reset team member selection
+                form.teamMember.value = ""; 
+                document.getElementById('date').valueAsDate = new Date();
+                
+                // Regenerate the next unique ID
+                form.invoiceNumber.value = generateUniqueId(recordType);
+
+            } catch (error) {
+                console.error("Error saving record:", error);
+                // Using console.log for error feedback
+                console.log(`Failed to save record. Details: ${error.message}`); 
+            }
+        });
+
+        // --- Utility Functions ---
+
+        function generateUniqueId(type) {
+            const prefix = type === 'Invoice' ? 'INV' : 'QUO';
+            const timestamp = new Date().getTime().toString().slice(-6);
+            const random = Math.floor(Math.random() * 100).toString().padStart(2, '0');
+            return `${prefix}-${timestamp}${random}`;
+        }
+        
+        document.addEventListener('authReady', () => {
+            document.getElementById('date').valueAsDate = new Date();
+            updateFormForType('Invoice');
+            // Start listening to records if the form page is already selected (shouldn't happen on first load but good practice)
+            if (currentPage === 'form') {
+                startRecordListener();
+            }
+        });
+
+        // --- QR Code Generation Logic (UPI Deep Link) ---
+
+        function createQrDataString(fullAmount, upfrontAmount = 0, recordId = '') {
+            // Determine the amount to encode: Upfront for Quote, Full for Invoice
+            const amount = upfrontAmount > 0 ? upfrontAmount : fullAmount;
+            
+            // Generate the standard UPI deep link string
+            // upi://pay?pa=UPIID&pn=ReceiverName&am=Amount&cu=Currency&tr=TransactionRef
+            const upiLink = new URL('upi://pay');
+            upiLink.searchParams.set('pa', UPI_ID); // Payee Address (Your ID)
+            upiLink.searchParams.set('pn', RECEIVER_NAME); // Payee Name
+            upiLink.searchParams.set('am', amount.toFixed(2)); // Amount
+            upiLink.searchParams.set('cu', 'INR'); // Currency
+            upiLink.searchParams.set('tr', recordId); // Transaction Reference (Invoice ID)
+
+            return upiLink.href;
+        }
+
+        function generateQRCode(recordId, data) {
+            const qrElementId = `qrcode-${recordId}`;
+            const qrContainer = document.getElementById(qrElementId);
+            
+            if (qrContainer) {
+                qrContainer.innerHTML = ''; 
+                new QRCode(qrContainer, {
+                    text: data,
+                    width: 128,
+                    height: 128,
+                    colorDark: "#f3f4f6", // Light QR for dark background
+                    colorLight: "#1f2937", // Dark background for contrast
+                    correctLevel: QRCode.CorrectLevel.L // Use lowest correction level to maximize data capacity/minimize size
+                });
+            }
+        }
+        
+        // --- PDF Download Logic ---
+
+        async function downloadRecord(recordId, recordType, customerName) {
+            const pillToPrint = document.getElementById(`record-${recordId}`);
+            if (!pillToPrint) {
+                return console.error("Could not find record to download:", recordId);
+            }
+            
+            // 1. Temporarily prepare the element for clean PDF capture
+            const downloadContainer = document.getElementById(`download-container-${recordId}`);
+            if (downloadContainer) downloadContainer.style.display = 'none';
+            
+            // Apply necessary styles for proper PDF rendering
+            pillToPrint.classList.add('pdf-capture-target');
+
+            // 2. Capture the element using html2canvas
+            const canvas = await html2canvas(pillToPrint, {
+                scale: 2, // Higher resolution for better quality
+                useCORS: true,
+                backgroundColor: '#1f2937' // Match card background explicitly
+            });
+
+            // 3. Convert canvas to PDF using jsPDF (A4 dimensions: 210mm x 297mm)
+            const imgData = canvas.toDataURL('image/jpeg', 1.0);
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            
+            const pdfWidth = pdf.internal.pageSize.getWidth(); // 210mm
+            const pdfHeight = pdf.internal.pageSize.getHeight(); // 297mm
+
+            // Calculate the image dimensions to fit within PDF width while maintaining aspect ratio
+            const imgWidth = pdfWidth - 20; // 10mm margin on each side
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+            
+            // Center the image horizontally (10mm margin) and vertically (if content is short)
+            const xPos = 10;
+            const yPos = 10; // Start at 10mm from top
+
+            pdf.addImage(imgData, 'JPEG', xPos, yPos, imgWidth, imgHeight);
+
+            // 4. Final PDF download
+            const fileName = `${recordType}_${customerName.replace(/\s/g, '_')}_${recordId}.pdf`;
+            pdf.save(fileName);
+
+            // 5. Restore the element's original state and cleanup temporary classes
+            if (downloadContainer) downloadContainer.style.display = 'block';
+            pillToPrint.classList.remove('pdf-capture-target');
+        }
+        
+        // --- HTML Rendering Logic ---
+
+        function createRecordPill(data) {
+            const isInvoice = data.type === 'Invoice';
+            const titleColor = isInvoice ? 'text-red-400' : 'text-blue-400';
+            const borderColor = isInvoice ? 'border-red-500' : 'border-blue-500';
+
+            const upfrontDetails = data.type === 'Quotation' ? `
+                <p class="text-gray-500">Upfront Percentage:</p>
+                <p class="font-medium text-blue-400">${(data.upfrontPercentage * 100).toFixed(0)}\%</p>
+
+                <p class="text-gray-500 font-bold ${titleColor}">UPFRONT AMOUNT:</p>
+                <p class="text-xl font-extrabold ${titleColor}">₹ ${data.upfrontAmount.toFixed(2)}</p>
+                <p class="col-span-2 text-xs text-gray-500 mt-2">QR Code is for the Upfront Amount.</p>
+            ` : ``;
+
+            const amountToDisplay = isInvoice ? data.amountCharged : data.amountCharged;
+            const amountLabel = isInvoice ? 'TOTAL AMOUNT' : 'FULL QUOTE VALUE';
+
+            const pill = document.createElement('div');
+            pill.className = `pill-card section-card rounded-2xl p-6 border-t-4 ${borderColor}`;
+            pill.id = `record-${data.id}`;
+            pill.dataset.amountCharged = data.amountCharged; 
+            pill.dataset.upfrontAmount = data.upfrontAmount; 
+
+            // Escape single quotes in customerName for the onclick attribute
+            const safeCustomerName = data.customerName.replace(/'/g, "\\'");
+
+            pill.innerHTML = `
+                <!-- Record Header -->
+                <div class="flex justify-between items-start mb-6 border-b border-gray-700 pb-4">
+                    <div>
+                        <h3 class="text-xl font-bold ${titleColor} mb-1">${data.type}</h3>
+                        <p class="text-sm text-gray-500">ID: <span class="font-mono text-gray-300">${data.id}</span></p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-lg font-semibold text-white">Date: ${data.date}</p>
+                        <p class="text-sm text-gray-500">Created by: <span class="font-semibold text-red-400">${data.teamMember}</span></p>
+                    </div>
+                </div>
+
+                <!-- Main Content Box (Service & Client Details) -->
+                <div class="border border-gray-700 rounded-lg p-4 mb-6 bg-gray-800/50">
+                    <h4 class="text-lg font-semibold mb-3 text-white">Client & Service Details</h4>
+                    <div class="grid grid-cols-2 gap-y-2 text-sm">
+                        <p class="text-gray-500">Customer:</p>
+                        <p class="font-medium text-white">${data.customerName}</p>
+                        
+                        <p class="text-gray-500">Mobile:</p>
+                        <p class="font-medium text-white">${data.mobileNumber}</p>
+
+                        <p class="text-gray-500">Service/Product:</p>
+                        <p class="font-medium text-white">${data.serviceName}</p>
+                        
+                        <p class="text-gray-500 font-bold ${titleColor} mt-2 col-span-2 border-t border-gray-700 pt-2">${amountLabel}:</p>
+                        <p class="text-2xl font-extrabold ${titleColor} col-span-2">₹ ${amountToDisplay.toFixed(2)}</p>
+
+                        ${upfrontDetails}
+                    </div>
+                </div>
+
+                <!-- Payment QR Code Section (UPDATED FOR UPI) -->
+                <div class="flex flex-col md:flex-row items-center bg-yellow-900/50 p-4 rounded-lg border border-yellow-800 mb-6">
+                    <div id="qrcode-${data.id}" class="p-2 bg-gray-900 rounded-lg border border-gray-700 flex-shrink-0">
+                        <div class="w-32 h-32 flex items-center justify-center text-xs text-gray-600">Loading QR...</div>
+                    </div>
+                    <div class="mt-4 md:mt-0 md:ml-6 flex-grow">
+                        <h4 class="text-md font-bold text-yellow-400">UPI Payment (Scan to Pay)</h4>
+                        <p class="text-sm text-gray-300 mt-2">
+                            <span class="font-semibold">UPI ID:</span> ${UPI_ID}<br>
+                            <span class="font-semibold">Recipient:</span> ${RECEIVER_NAME}
+                        </p>
+                        <p class="text-xs text-yellow-500 mt-1">QR encodes the UPI link with the exact amount due, referencing ID ${data.id}.</p>
+                    </div>
+                </div>
+
+                <!-- Disclaimer -->
+                <div class="mt-6 border-t border-gray-700 pt-4">
+                    <h4 class="text-sm font-semibold text-gray-500 mb-2">Disclaimer</h4>
+                    <ul class="text-xs text-gray-500 space-y-1 list-disc pl-4">
+                        <li>This ${data.type.toLowerCase()} is valid for 30 days from the date of issue.</li>
+                        <li>All payments are due upon receipt unless otherwise agreed in writing.</li>
+                        <li>This document is created for internal history records only and does not include any tax (GST) calculations.</li>
+                    </ul>
+                </div>
+
+                <!-- Download Button (NEW) -->
+                <div class="text-center mt-6" id="download-container-${data.id}">
+                    <button onclick="downloadRecord('${data.id}', '${data.type}', '${safeCustomerName}')" class="py-2 px-6 rounded-lg text-sm font-semibold bg-green-600 hover:bg-green-700 transition transform shadow-lg flex items-center justify-center mx-auto">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        Download PDF
+                    </button>
+                </div>
+            `;
+            return pill;
+        }
+
+
+        // --- Admin Panel Logic ---
+        
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const id = document.getElementById('adminId').value;
+            const pass = document.getElementById('adminPass').value;
+            const msg = document.getElementById('loginMessage');
+            
+            if (id === ADMIN_ID && pass === ADMIN_PASS) {
+                document.getElementById('adminLogin').classList.add('hidden');
+                document.getElementById('adminDashboard').classList.remove('hidden');
+                msg.textContent = '';
+                fetchAdminData();
+            } else {
+                msg.textContent = 'Invalid ID or Password.';
+            }
+        });
+
+        async function fetchAdminData() {
+            if (!window.db) return;
+            
+            const collectionRef = getCollectionRef();
+            let totalRecords = 0;
+            let totalRevenue = 0;
+            let totalQuoteValue = 0;
+            const monthlyData = {}; // { 'YYYY-MM': revenue }
+            const teamStats = {}; // { 'TeamMemberName': count }
+
+            try {
+                const snapshot = await getDocs(collectionRef);
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const amount = data.amountCharged || 0;
+                    const date = data.date;
+                    const type = data.type;
+                    const member = data.teamMember || 'Unknown';
+                    
+                    totalRecords++;
+                    
+                    // Revenue Tracking (Only Invoices)
+                    if (type === 'Invoice') {
+                        totalRevenue += amount;
+                    } else if (type === 'Quotation') {
+                        totalQuoteValue += amount;
+                    }
+                    
+                    // Monthly Data (Invoices only)
+                    if (type === 'Invoice' && date) {
+                        const monthKey = date.substring(0, 7); // YYYY-MM
+                        monthlyData[monthKey] = (monthlyData[monthKey] || 0) + amount;
+                    }
+
+                    // Team Stats
+                    teamStats[member] = (teamStats[member] || 0) + 1;
+                });
+
+                // Update Stats
+                document.getElementById('stat-total-pills').textContent = totalRecords;
+                document.getElementById('stat-total-revenue').textContent = `₹ ${totalRevenue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+                document.getElementById('stat-total-quote').textContent = `₹ ${totalQuoteValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+                
+                // Render Graph
+                renderMonthlyGraph(monthlyData);
+
+                // Render Team Stats
+                renderTeamStats(teamStats);
+
+            } catch (error) {
+                console.error("Error fetching admin data:", error);
+                // Using console.log for errors instead of alert
+                console.log("Failed to load admin data. Check console for details.");
+            }
+        }
+
+        function renderMonthlyGraph(data) {
+            const container = document.getElementById('monthlyRevenueGraph');
+            container.innerHTML = '';
+            
+            const sortedMonths = Object.keys(data).sort();
+            if (sortedMonths.length === 0) {
+                 container.innerHTML = '<p class="text-gray-500">No invoice data to display.</p>';
+                 return;
+            }
+
+            const maxRevenue = Math.max(...Object.values(data));
+
+            sortedMonths.forEach(monthKey => {
+                const revenue = data[monthKey];
+                const percentage = (revenue / maxRevenue) * 100;
+                const monthName = new Date(monthKey).toLocaleString('en-US', { month: 'short', year: 'numeric' });
+                
+                const bar = document.createElement('div');
+                bar.className = 'flex items-center space-x-3';
+                bar.innerHTML = `
+                    <span class="text-xs text-gray-400 w-20 flex-shrink-0">${monthName}</span>
+                    <div class="flex-grow">
+                        <div class="graph-bar" style="width: ${percentage.toFixed(2)}%;"></div>
+                    </div>
+                    <span class="text-sm text-white font-semibold flex-shrink-0">₹ ${revenue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                `;
+                container.appendChild(bar);
+            });
+        }
+
+        function renderTeamStats(data) {
+            const container = document.getElementById('teamStats');
+            container.innerHTML = '';
+
+            const teamMembers = Object.keys(data).sort((a, b) => data[b] - data[a]);
+
+            teamMembers.forEach(member => {
+                const count = data[member];
+                container.innerHTML += `
+                    <div class="flex justify-between p-2 rounded-lg bg-gray-700/50">
+                        <span class="font-semibold text-white">${member}</span>
+                        <span class="text-red-400 font-bold">${count} bills/quotes</span>
+                    </div>
+                `;
+            });
+
+            if (teamMembers.length === 0) {
+                 container.innerHTML = '<p class="text-gray-500">No team data to display.</p>';
+            }
+        }
+
+        // Initialize the app on page load
+        changePage('home');
+    </script>
+</body>
+</html>
